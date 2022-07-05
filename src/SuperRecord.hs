@@ -53,7 +53,6 @@ module SuperRecord
     , RecCopy
     , RecTy, RecTyIdxH
     , showRec, RecKeys(..), recKeys
-    , recToValue, recToEncoding
     , recJsonParser, RecJsonParse(..)
     , UnsafeRecBuild(..), recBuild, recBuildPure
     , RecVecIdxPos
@@ -86,7 +85,6 @@ import GHC.Generics
 import GHC.Exts
 import GHC.TypeLits
 import qualified Control.Monad.State as S
-import qualified Data.Text as T
 import Data.Semigroup as Sem (Semigroup(..))
 
 #ifdef JS_RECORD
@@ -148,12 +146,6 @@ instance (RecApply lts lts (ConstC Show)) => Show (Rec lts) where
 instance RecApply lts lts (Tuple22C (ConstC Eq) (Has lts)) => Eq (Rec lts) where
     r1 == r2 = recApply @lts @lts @(Tuple22C (ConstC Eq) (Has lts)) ( \lbl v b -> get lbl r2 == v && b ) r1 True
     {-# INLINE (==) #-}
-
-instance
-    ( RecApply lts lts (ConstC ToJSON)
-    ) => ToJSON (Rec lts) where
-    toJSON = recToValue
-    toEncoding = recToEncoding
 
 instance (RecSize lts ~ s, KnownNat s, RecJsonParse lts) => FromJSON (Rec lts) where
     parseJSON = recJsonParser
@@ -695,12 +687,6 @@ reflectRecFold f r =
 showRec :: forall lts. (RecApply lts lts (ConstC Show)) => Rec lts -> [(String, String)]
 showRec = reflectRec @(ConstC Show) (\(_ :: FldProxy lbl) v -> (symbolVal' (proxy# :: Proxy# lbl), show v))
 
-recToValue :: forall lts. (RecApply lts lts (ConstC ToJSON)) => Rec lts -> Value
-recToValue r = object $ reflectRec @(ConstC ToJSON) (\(_ :: FldProxy lbl) v -> (T.pack $ symbolVal' (proxy# :: Proxy# lbl), toJSON v)) r
-
-recToEncoding :: forall lts. (RecApply lts lts (ConstC ToJSON)) => Rec lts -> Encoding
-recToEncoding r = pairs $ mconcat $ reflectRec @(ConstC ToJSON) (\(_ :: FldProxy lbl) v -> (T.pack (symbolVal' (proxy# :: Proxy# lbl)) .= v)) r
-
 recJsonParser :: forall lts s. (RecSize lts ~ s, KnownNat s, RecJsonParse lts) => Value -> Parser (Rec lts)
 recJsonParser =
     withObject "Record" $ \o ->
@@ -823,20 +809,6 @@ class RecJsonParse (lts :: [*]) where
 
 instance RecJsonParse '[] where
     recJsonParse initSize _ = pure (unsafeRNil initSize)
-
-instance
-    ( KnownSymbol l, FromJSON t, RecJsonParse lts
-    , RecSize lts ~ s, KnownNat s, KeyDoesNotExist l lts
-#ifdef JS_RECORD
-    , ToJSVal t
-#endif
-    ) => RecJsonParse (l := t ': lts) where
-    recJsonParse initSize obj =
-        do let lbl :: FldProxy l
-               lbl = FldProxy
-           rest <- recJsonParse initSize obj
-           (v :: t) <- obj .: T.pack (symbolVal lbl)
-           pure $ unsafeRCons (lbl := v) rest
 
 -- | Conversion helper to bring a Haskell type to a record. Note that the
 -- native Haskell type must be an instance of 'Generic'
